@@ -1,550 +1,163 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PetSafe IoT — Live Tracking</title>
-
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: Inter, -apple-system, BlinkMacSystemFont,
-                         "Segoe UI", Roboto, Arial, sans-serif;
-            background: #f1f5f9; color: #0f172a; min-height: 100vh;
-        }
-
-        header {
-            background: linear-gradient(135deg, #0f172a, #1e293b);
-            color: white; padding: 20px 32px;
-            display: flex; justify-content: space-between; align-items: center;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
-        }
-        header .brand { display: flex; align-items: center; gap: 12px; }
-        header .logo {
-            width: 44px; height: 44px; border-radius: 12px;
-            background: linear-gradient(135deg, #2563eb, #38bdf8);
-            display: flex; align-items: center; justify-content: center;
-            font-size: 22px;
-        }
-        header h1 { font-size: 20px; }
-        header p { font-size: 12px; color: #94a3b8; margin-top: 2px; }
-
-        .status-badge {
-            padding: 8px 16px; border-radius: 20px;
-            font-size: 12px; font-weight: 700;
-            background: #10b981; color: white;
-            display: flex; align-items: center; gap: 8px;
-        }
-        .status-badge.offline { background: #ef4444; }
-        .status-badge.warning { background: #f59e0b; }
-
-        .container { padding: 30px 32px; max-width: 1400px; margin: 0 auto; }
-
-        .alert-bar {
-            background: linear-gradient(135deg, #fef2f2, #fee2e2);
-            border-left: 5px solid #ef4444;
-            color: #991b1b; padding: 16px 22px;
-            border-radius: 12px; margin-bottom: 22px;
-            font-size: 14px; display: none;
-            animation: slideIn 0.3s ease;
-        }
-        .alert-bar.show { display: block; }
-        @keyframes slideIn {
-            from { opacity: 0; transform: translateY(-10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 16px; margin-bottom: 22px;
-        }
-        .stat {
-            background: white; border-radius: 14px;
-            padding: 20px; border: 1px solid #e2e8f0;
-            box-shadow: 0 4px 14px rgba(0,0,0,0.04);
-            position: relative; overflow: hidden;
-        }
-        .stat::before {
-            content: ''; position: absolute; top: 0; left: 0;
-            width: 4px; height: 100%; background: #2563eb;
-        }
-        .stat.green::before { background: #10b981; }
-        .stat.red::before { background: #ef4444; }
-        .stat.orange::before { background: #f59e0b; }
-
-        .stat .icon { font-size: 22px; margin-bottom: 8px; display: block; }
-        .stat .label {
-            font-size: 11px; text-transform: uppercase;
-            color: #64748b; font-weight: 700;
-            letter-spacing: 0.5px; margin-bottom: 6px;
-        }
-        .stat .value { font-size: 26px; font-weight: 700; }
-        .stat .value.small { font-size: 16px; }
-
-        .grid { display: grid; grid-template-columns: 1fr 380px; gap: 20px; }
-
-        #map {
-            width: 100%; height: 620px;
-            border-radius: 14px; border: 1px solid #e2e8f0;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.06);
-        }
-
-        .pet-list {
-            background: white; border-radius: 14px;
-            padding: 18px; border: 1px solid #e2e8f0;
-            max-height: 620px; overflow-y: auto;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.06);
-        }
-        .pet-list h3 {
-            font-size: 15px; margin-bottom: 15px;
-            padding-bottom: 12px; border-bottom: 1px solid #f1f5f9;
-        }
-
-        .pet-card {
-            padding: 14px; border-radius: 10px;
-            background: #f8fafc; margin-bottom: 10px;
-            border: 1px solid #e2e8f0; transition: 0.2s;
-        }
-        .pet-card:hover { background: white; border-color: #2563eb; }
-        .pet-card.outside {
-            background: #fef2f2; border-color: #ef4444;
-            animation: pulse-red 2s infinite;
-        }
-        .pet-card.offline { opacity: 0.6; }
-        @keyframes pulse-red {
-            0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
-            50% { box-shadow: 0 0 0 12px rgba(239, 68, 68, 0); }
-        }
-
-        .pet-card h4 {
-            font-size: 14px; margin-bottom: 8px;
-            display: flex; justify-content: space-between;
-            align-items: center; gap: 8px;
-        }
-        .pet-card .info {
-            font-size: 12px; color: #64748b;
-            display: flex; justify-content: space-between;
-            margin: 5px 0;
-        }
-        .pet-card .info strong { color: #0f172a; font-weight: 600; }
-        .pet-card .info strong.warn { color: #ef4444; }
-        .pet-card .info strong.ok { color: #10b981; }
-
-        .badge {
-            display: inline-block; padding: 3px 10px;
-            border-radius: 20px; font-size: 10px;
-            font-weight: 700; text-transform: uppercase;
-        }
-        .badge.safe    { background: #ecfdf5; color: #047857; }
-        .badge.warning { background: #fff7ed; color: #c2410c; }
-        .badge.danger  { background: #fef2f2; color: #b91c1c; }
-        .badge.outside { background: #ef4444; color: white; animation: blink 1s infinite; }
-        .badge.offline { background: #64748b; color: white; }
-
-        @keyframes blink {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.3; }
-        }
-
-        .legend {
-            background: white; border-radius: 12px;
-            padding: 16px 20px; border: 1px solid #e2e8f0;
-            margin-top: 16px; font-size: 12px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.06);
-        }
-        .legend h4 {
-            font-size: 11px; margin-bottom: 10px;
-            color: #64748b; text-transform: uppercase;
-        }
-        .legend .item {
-            display: flex; align-items: center; gap: 10px;
-            margin: 6px 0; color: #475569;
-        }
-        .legend .dot {
-            width: 14px; height: 14px;
-            border-radius: 50%; flex-shrink: 0;
-        }
-
-        .empty { color: #94a3b8; font-size: 13px; text-align: center; padding: 30px 0; }
-
-        .footer {
-            text-align: center; color: #94a3b8;
-            font-size: 12px; padding: 30px;
-        }
-
-        @media (max-width: 1000px) {
-            .grid { grid-template-columns: 1fr; }
-            #map { height: 400px; }
-        }
-        @media (max-width: 600px) {
-            .container { padding: 20px 16px; }
-            header { padding: 16px 20px; flex-direction: column; gap: 12px; }
-            header h1 { font-size: 16px; }
-            .stats { grid-template-columns: 1fr 1fr; }
-        }
-    </style>
-</head>
-<body>
-
-<header>
-    <div class="brand">
-        <div class="logo">🐾</div>
-        <div>
-            <h1>PetSafe IoT</h1>
-            <p>Real-Time Pet Tracking System</p>
-        </div>
-    </div>
-    <div class="status-badge" id="status">
-        <span>🟢</span>
-        <span id="statusText">Connecting...</span>
-    </div>
-</header>
-
-<div class="container">
-
-    <div class="alert-bar" id="alertBar">
-        🚨 <strong>ALERT:</strong> <span id="alertText"></span>
-    </div>
-
-    <div class="stats">
-        <div class="stat">
-            <span class="icon">🐾</span>
-            <div class="label">Total Pets</div>
-            <div class="value" id="totalPets">—</div>
-        </div>
-        <div class="stat green">
-            <span class="icon">📍</span>
-            <div class="label">Active Devices</div>
-            <div class="value" id="activeDevices">—</div>
-        </div>
-        <div class="stat red">
-            <span class="icon">❤️</span>
-            <div class="label">Avg Heart Rate</div>
-            <div class="value" id="avgHR">—</div>
-        </div>
-        <div class="stat orange">
-            <span class="icon">⚡</span>
-            <div class="label">Next Update</div>
-            <div class="value small" id="updateRate">6s</div>
-        </div>
-    </div>
-
-    <div class="grid">
-        <div>
-            <div id="map"></div>
-            <div class="legend">
-                <h4>🗺️ Map Legend</h4>
-                <div class="item"><div class="dot" style="background:#2563eb;"></div><span>Home Base (1km safety radius)</span></div>
-                <div class="item"><div class="dot" style="background:#10b981;"></div><span>Safe — Naa sa loob sa zone</span></div>
-                <div class="item"><div class="dot" style="background:#f59e0b;"></div><span>Warning — Duol sa boundary</span></div>
-                <div class="item"><div class="dot" style="background:#ef4444;"></div><span>Danger — Migawas sa 1km</span></div>
-                <div class="item"><div class="dot" style="background:#64748b;"></div><span>Offline — Wala nag-update</span></div>
-                <div class="item" style="margin-top:8px;padding-top:8px;border-top:1px solid #f1f5f9;">
-                    <div style="width:20px;height:3px;background:#2563eb;border-radius:2px;"></div>
-                    <span>Movement trail (dalan sa iro)</span>
-                </div>
-            </div>
-        </div>
-        <div class="pet-list">
-            <h3>🐾 Live Pets</h3>
-            <div id="petList"><p class="empty">Loading...</p></div>
-        </div>
-    </div>
-
-    <div class="footer">
-        <strong>PetSafe IoT</strong> — Real-Time Pet Monitoring System<br>
-        📚 Educational Project | Powered by Supabase & OpenStreetMap
-    </div>
-</div>
-
-<script>
-// =========================================================
-// 🔧 CONFIGURATION
-// =========================================================
-const SUPABASE_URL      = "https://sqpneocapdetejhsfpzk.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_A0NA-xH5v88AzikE_F73Tg_zc84qRZW";
-
-// 📍 HOME BASE — ILISI SA IMONG BALAY
-const HOME_LAT = 10.3157;
-const HOME_LNG = 123.8854;
-
-// 🛡️ SETTINGS
-const MAX_DISTANCE_KM    = 1.0;
-const UPDATE_INTERVAL    = 6000;
-const OFFLINE_THRESHOLD  = 120;
-const TRAIL_POINTS       = 20;
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <TinyGPS++.h>
+#include <HardwareSerial.h>
 
 // =========================================================
-// INIT SUPABASE
+// 🔧 WIFI CONFIGURATION
 // =========================================================
-const { createClient } = supabase;
-const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-// =========================================================
-// INIT MAP
-// =========================================================
-const map = L.map('map').setView([HOME_LAT, HOME_LNG], 14);
-
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap', maxZoom: 19
-}).addTo(map);
-
-L.circle([HOME_LAT, HOME_LNG], {
-    color: '#2563eb', fillColor: '#3b82f6',
-    fillOpacity: 0.12, weight: 2,
-    radius: MAX_DISTANCE_KM * 1000
-}).addTo(map);
-
-L.marker([HOME_LAT, HOME_LNG], {
-    icon: L.divIcon({
-        className: '',
-        html: '<div style="background:#2563eb;color:white;width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:20px;border:3px solid white;box-shadow:0 4px 14px rgba(37,99,235,0.4);">🏠</div>',
-        iconSize: [40, 40], iconAnchor: [20, 20]
-    })
-}).addTo(map).bindPopup('<strong>🏠 Home Base</strong><br>Safety radius: 1 km');
-
-const markers = {};
-const trails  = {};
+const char* WIFI_SSID     = "SANTOS WIFI 2.4G";
+const char* WIFI_PASSWORD = "Santos100601";
 
 // =========================================================
-// DISTANCE (Haversine)
+// ☁️ SUPABASE CONFIGURATION
 // =========================================================
-function getDistanceKm(lat1, lon1, lat2, lon2) {
-    const R = 6371;
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-              Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) *
-              Math.sin(dLon/2) * Math.sin(dLon/2);
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+const char* SUPABASE_URL  = "https://sqpneocapdetejhsfpzk.supabase.co";
+const char* SUPABASE_KEY  = "sb_publishable_A0NA-xH5v88AzikE_F73Tg_zc84qRZW";
+const int   PET_ID        = 1;
+
+// =========================================================
+// 📍 HOME BASE & GEOFENCE SETTINGS (Ilisan sa inyong balay)
+// =========================================================
+const double HOME_LAT = 10.3157;
+const double HOME_LNG = 123.8854;
+const double MAX_DISTANCE_KM = 1.0; // 1 Kilometer Safety Radius
+
+// =========================================================
+// 📌 PINS CONFIGURATION
+// =========================================================
+#define GPS_RX 16
+#define GPS_TX 17
+#define HR_PIN 34
+#define BUZZER_PIN 25 // Buzzer mo-on kung molapas sa 1km
+
+TinyGPSPlus gps;
+HardwareSerial GPS_Serial(2);
+
+unsigned long lastSend = 0;
+const unsigned long SEND_INTERVAL = 6000; // 6 seconds real-time update
+
+// Haversine formula para sa pag-compute sa gilay-on sa iro gikan sa balay
+double calculateDistance(double lat1, double lon1, double lat2, double lon2) {
+    double R = 6371.0; 
+    double dLat = (lat2 - lat1) * PI / 180.0;
+    double dLon = (lon2 - lon1) * PI / 180.0;
+    double a = sin(dLat / 2) * sin(dLat / 2) +
+               cos(lat1 * PI / 180.0) * cos(lat2 * PI / 180.0) *
+               sin(dLon / 2) * sin(dLon / 2);
+    double c = 2 * atan2(sqrt(a), sqrt(1 - a));
+    return R * c;
 }
 
-function timeAgo(dateStr) {
-    const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-    if (diff < 10) return 'just now';
-    if (diff < 60) return diff + 's ago';
-    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
-    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
-    return Math.floor(diff / 86400) + 'd ago';
+void setup() {
+    Serial.begin(115200);
+    GPS_Serial.begin(9600, SERIAL_8N1, GPS_RX, GPS_TX);
+    
+    pinMode(BUZZER_PIN, OUTPUT);
+    digitalWrite(BUZZER_PIN, HIGH); // Off kung active-low ang buzzer
+
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 40) {
+        delay(500);
+        Serial.print(".");
+        attempts++;
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.println("\n✅ WiFi Connected!");
+    } else {
+        Serial.println("\n❌ WiFi Failed!");
+    }
 }
 
-// =========================================================
-// LOAD DATA
-// =========================================================
-async function loadAll() {
-    try {
-        const { data: pets, error } = await db
-            .from('pets').select('*')
-            .order('created_at', { ascending: false });
+void loop() {
+    while (GPS_Serial.available() > 0) {
+        gps.encode(GPS_Serial.read());
+    }
 
-        if (error) throw error;
+    if (millis() - lastSend > SEND_INTERVAL) {
+        lastSend = millis();
 
-        document.getElementById('status').classList.remove('offline');
-        document.getElementById('statusText').textContent = 'Live';
-        document.getElementById('totalPets').textContent = pets.length;
+        if (gps.location.isValid()) {
+            double lat = gps.location.lat();
+            double lng = gps.location.lng();
 
-        const list = document.getElementById('petList');
-        list.innerHTML = '';
+            // Susiha ang distansya gikan sa balay
+            double distance = calculateDistance(HOME_LAT, HOME_LNG, lat, lng);
+            Serial.printf("📏 Distance from home: %.3f km\n", distance);
 
-        let activeCount = 0, totalHR = 0, hrCount = 0;
-        const bounds = [];
-        const alerts = [];
-
-        for (const pet of pets) {
-            const { data: locHistory } = await db
-                .from('location_logs').select('*')
-                .eq('pet_id', pet.id)
-                .order('date_time', { ascending: false })
-                .limit(TRAIL_POINTS);
-
-            const locs = (locHistory || []).reverse();
-            const loc = locs.length > 0 ? locs[locs.length - 1] : null;
-
-            const { data: hrArr } = await db
-                .from('heart_rate_logs').select('*')
-                .eq('pet_id', pet.id)
-                .order('date_time', { ascending: false })
-                .limit(1);
-            const hr = hrArr && hrArr[0];
-
-            let safety = 'safe';
-            let distanceKm = 0;
-            let isOutside = false;
-            let isOffline = false;
-            let lastUpdate = '—';
-
-            if (loc && loc.latitude && loc.longitude) {
-                activeCount++;
-                const lat = parseFloat(loc.latitude);
-                const lng = parseFloat(loc.longitude);
-
-                distanceKm = getDistanceKm(HOME_LAT, HOME_LNG, lat, lng);
-                lastUpdate = timeAgo(loc.date_time);
-
-                const secondsSince = Math.floor((Date.now() - new Date(loc.date_time).getTime()) / 1000);
-                isOffline = secondsSince > OFFLINE_THRESHOLD;
-
-                if (distanceKm > MAX_DISTANCE_KM) {
-                    isOutside = true;
-                    safety = 'danger';
-                    alerts.push(`${pet.pet_name} is ${distanceKm.toFixed(2)} km away from home!`);
-                } else if (distanceKm > MAX_DISTANCE_KM * 0.75) {
-                    safety = 'warning';
-                }
-
-                if (loc.safety_status && loc.safety_status.toLowerCase() === 'danger') {
-                    safety = 'danger';
-                }
-
-                bounds.push([lat, lng]);
-
-                if (locs.length > 1) {
-                    const trailCoords = locs.map(l => [parseFloat(l.latitude), parseFloat(l.longitude)]);
-                    if (trails[pet.id]) {
-                        trails[pet.id].setLatLngs(trailCoords);
-                    } else {
-                        trails[pet.id] = L.polyline(trailCoords, {
-                            color: '#2563eb', weight: 4, opacity: 0.7,
-                            dashArray: '10, 5', lineCap: 'round'
-                        }).addTo(map);
-                    }
-                }
-
-                const markerColor = isOffline ? '#64748b'
-                                  : safety === 'safe' ? '#10b981'
-                                  : safety === 'warning' ? '#f59e0b'
-                                  : '#ef4444';
-
-                const petEmoji = (pet.species || '').toLowerCase().includes('cat') ? '🐱' : '🐶';
-                const pulseAnim = isOutside ? 'animation:blink 1s infinite;' : '';
-
-                const markerIcon = L.divIcon({
-                    className: '',
-                    html: `<div style="background:${markerColor};color:white;width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:24px;border:4px solid white;box-shadow:0 6px 18px rgba(0,0,0,0.4);${pulseAnim}">${petEmoji}</div>`,
-                    iconSize: [46, 46], iconAnchor: [23, 23]
-                });
-
-                if (markers[pet.id]) {
-                    markers[pet.id].setLatLng([lat, lng]);
-                    markers[pet.id].setIcon(markerIcon);
-                } else {
-                    markers[pet.id] = L.marker([lat, lng], { icon: markerIcon }).addTo(map);
-                }
-
-                markers[pet.id].bindPopup(
-                    '<div style="font-family:Inter,sans-serif;min-width:220px;">' +
-                    '<strong style="font-size:14px;">' + petEmoji + ' ' + pet.pet_name + '</strong><br>' +
-                    '<hr style="border:none;border-top:1px solid #e2e8f0;margin:6px 0;">' +
-                    '<div style="font-size:12px;color:#64748b;">' +
-                    '<div>📍 <b>' + lat.toFixed(5) + ', ' + lng.toFixed(5) + '</b></div>' +
-                    '<div>📏 Distance: <b>' + distanceKm.toFixed(3) + ' km</b></div>' +
-                    '<div>❤️ Heart rate: <b>' + (hr ? hr.heart_rate + ' BPM' : 'No data') + '</b></div>' +
-                    '<div>🛡️ Status: <b>' + (isOffline ? 'OFFLINE' : safety.toUpperCase()) + '</b></div>' +
-                    '<div>🕒 Updated: <b>' + lastUpdate + '</b></div>' +
-                    '</div></div>'
-                );
+            String safetyStatus = "safe";
+            if (distance > MAX_DISTANCE_KM) {
+                safetyStatus = "danger";
+                digitalWrite(BUZZER_PIN, LOW); // Mo-on ang buzzer kung lumapas sa 1km
+                Serial.println("🚨 DANGER: Pet is outside the 1km safety zone! Buzzer ON.");
+            } else {
+                digitalWrite(BUZZER_PIN, HIGH); // Patay ang buzzer kung naa sa safe zone
             }
 
-            if (hr && hr.heart_rate) {
-                totalHR += hr.heart_rate;
-                hrCount++;
+            // Ipadala ang lokasyon sa Supabase
+            sendLocation(lat, lng, safetyStatus);
+
+            // Basahon ang Heart Rate ug ipadala
+            int bpm = map(analogRead(HR_PIN), 0, 4095, 60, 120);
+            if (bpm >= 40 && bpm <= 200) {
+                sendHeartRate(bpm);
             }
-
-            const card = document.createElement('div');
-            card.className = 'pet-card' +
-                             (isOutside ? ' outside' : '') +
-                             (isOffline ? ' offline' : '');
-
-            let badgeClass = isOffline ? 'offline' : (isOutside ? 'outside' : safety);
-            let badgeText  = isOffline ? '⚫ OFFLINE'
-                           : isOutside ? '🚨 OUTSIDE'
-                           : safety.toUpperCase();
-
-            card.innerHTML =
-                '<h4>🐾 ' + pet.pet_name +
-                ' <span class="badge ' + badgeClass + '">' + badgeText + '</span></h4>' +
-                '<div class="info"><span>Species</span><strong>' + (pet.species || '—') + '</strong></div>' +
-                '<div class="info"><span>Distance</span><strong class="' + (isOutside ? 'warn' : '') + '">' +
-                    (loc ? distanceKm.toFixed(3) + ' km' : '—') + '</strong></div>' +
-                '<div class="info"><span>Coordinates</span><strong>' +
-                    (loc ? parseFloat(loc.latitude).toFixed(4) + ', ' + parseFloat(loc.longitude).toFixed(4) : '—') +
-                '</strong></div>' +
-                '<div class="info"><span>Heart Rate</span><strong>' +
-                    (hr ? hr.heart_rate + ' BPM' : '—') + '</strong></div>' +
-                '<div class="info"><span>Last Update</span><strong class="' + (isOffline ? 'warn' : 'ok') + '">' +
-                    lastUpdate + '</strong></div>';
-            list.appendChild(card);
-        }
-
-        document.getElementById('activeDevices').textContent = activeCount;
-        document.getElementById('avgHR').textContent =
-            hrCount > 0 ? Math.round(totalHR / hrCount) + ' BPM' : '—';
-
-        const alertBar = document.getElementById('alertBar');
-        if (alerts.length > 0) {
-            alertBar.classList.add('show');
-            document.getElementById('alertText').textContent = alerts.join(' • ');
         } else {
-            alertBar.classList.remove('show');
+            Serial.println("⚠️ Waiting for GPS fix...");
         }
-
-        if (bounds.length > 0) {
-            bounds.push([HOME_LAT, HOME_LNG]);
-            map.fitBounds(bounds, { padding: [80, 80], maxZoom: 16 });
-        }
-
-        if (pets.length === 0) {
-            list.innerHTML = '<p class="empty">No pets registered yet.<br>Add a pet in Supabase to start monitoring.</p>';
-        }
-
-    } catch (err) {
-        console.error('Error:', err);
-        const status = document.getElementById('status');
-        status.classList.add('offline');
-        document.getElementById('statusText').textContent = 'Connection Error';
     }
 }
 
-// =========================================================
-// REALTIME SUBSCRIPTION
-// =========================================================
-db.channel('live-updates')
-    .on('postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'location_logs' },
-        (payload) => {
-            console.log('📍 New location:', payload.new);
-            loadAll();
-        }
-    )
-    .on('postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'heart_rate_logs' },
-        (payload) => {
-            console.log('❤️ New heart rate:', payload.new);
-            loadAll();
-        }
-    )
-    .subscribe();
+void sendLocation(double lat, double lng, String status) {
+    HTTPClient http;
+    String url = String(SUPABASE_URL) + "/rest/v1/location_logs";
 
-// =========================================================
-// AUTO REFRESH
-// =========================================================
-loadAll();
+    http.begin(url);
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("apikey", SUPABASE_KEY);
+    http.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
+    http.addHeader("Prefer", "return=minimal");
 
-let countdown = UPDATE_INTERVAL / 1000;
-setInterval(() => {
-    countdown--;
-    if (countdown <= 0) {
-        countdown = UPDATE_INTERVAL / 1000;
-        loadAll();
+    String payload = "{";
+    payload += "\"pet_id\":" + String(PET_ID) + ",";
+    payload += "\"latitude\":" + String(lat, 6) + ",";
+    payload += "\"longitude\":" + String(lng, 6) + ",";
+    payload += "\"safety_status\":\"" + status + "\"";
+    payload += "}";
+
+    int httpCode = http.POST(payload);
+    if (httpCode > 0) {
+        Serial.printf("✅ Location sent HTTP %d\n", httpCode);
+    } else {
+        Serial.printf("❌ Location Failed: %s\n", http.errorToString(httpCode).c_str());
     }
-    document.getElementById('updateRate').textContent = countdown + 's';
-}, 1000);
-</script>
+    http.end();
+}
 
-</body>
-</html>
+void sendHeartRate(int bpm) {
+    HTTPClient http;
+    String url = String(SUPABASE_URL) + "/rest/v1/heart_rate_logs";
+
+    http.begin(url);
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("apikey", SUPABASE_KEY);
+    http.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
+    http.addHeader("Prefer", "return=minimal");
+
+    String payload = "{";
+    payload += "\"pet_id\":" + String(PET_ID) + ",";
+    payload += "\"heart_rate\":" + String(bpm);
+    payload += "}";
+
+    int httpCode = http.POST(payload);
+    if (httpCode > 0) {
+        Serial.printf("✅ HR HTTP %d\n", httpCode);
+    } else {
+        Serial.printf("❌ HR Failed\n");
+    }
+    http.end();
+}
