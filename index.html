@@ -1,163 +1,144 @@
-#include <WiFi.h>
-#include <HTTPClient.h>
-#include <TinyGPS++.h>
-#include <HardwareSerial.h>
-
-// =========================================================
-// 🔧 WIFI CONFIGURATION
-// =========================================================
-const char* WIFI_SSID     = "SANTOS WIFI 2.4G";
-const char* WIFI_PASSWORD = "Santos100601";
-
-// =========================================================
-// ☁️ SUPABASE CONFIGURATION
-// =========================================================
-const char* SUPABASE_URL  = "https://sqpneocapdetejhsfpzk.supabase.co";
-const char* SUPABASE_KEY  = "sb_publishable_A0NA-xH5v88AzikE_F73Tg_zc84qRZW";
-const int   PET_ID        = 1;
-
-// =========================================================
-// 📍 HOME BASE & GEOFENCE SETTINGS (Ilisan sa inyong balay)
-// =========================================================
-const double HOME_LAT = 10.3157;
-const double HOME_LNG = 123.8854;
-const double MAX_DISTANCE_KM = 1.0; // 1 Kilometer Safety Radius
-
-// =========================================================
-// 📌 PINS CONFIGURATION
-// =========================================================
-#define GPS_RX 16
-#define GPS_TX 17
-#define HR_PIN 34
-#define BUZZER_PIN 25 // Buzzer mo-on kung molapas sa 1km
-
-TinyGPSPlus gps;
-HardwareSerial GPS_Serial(2);
-
-unsigned long lastSend = 0;
-const unsigned long SEND_INTERVAL = 6000; // 6 seconds real-time update
-
-// Haversine formula para sa pag-compute sa gilay-on sa iro gikan sa balay
-double calculateDistance(double lat1, double lon1, double lat2, double lon2) {
-    double R = 6371.0; 
-    double dLat = (lat2 - lat1) * PI / 180.0;
-    double dLon = (lon2 - lon1) * PI / 180.0;
-    double a = sin(dLat / 2) * sin(dLat / 2) +
-               cos(lat1 * PI / 180.0) * cos(lat2 * PI / 180.0) *
-               sin(dLon / 2) * sin(dLon / 2);
-    double c = 2 * atan2(sqrt(a), sqrt(1 - a));
-    return R * c;
-}
-
-void setup() {
-    Serial.begin(115200);
-    GPS_Serial.begin(9600, SERIAL_8N1, GPS_RX, GPS_TX);
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PetSafe IoT - Live Tracking</title>
     
-    pinMode(BUZZER_PIN, OUTPUT);
-    digitalWrite(BUZZER_PIN, HIGH); // Off kung active-low ang buzzer
-
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    <!-- Leaflet CSS para sa Map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 40) {
-        delay(500);
-        Serial.print(".");
-        attempts++;
-    }
-
-    if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("\n✅ WiFi Connected!");
-    } else {
-        Serial.println("\n❌ WiFi Failed!");
-    }
-}
-
-void loop() {
-    while (GPS_Serial.available() > 0) {
-        gps.encode(GPS_Serial.read());
-    }
-
-    if (millis() - lastSend > SEND_INTERVAL) {
-        lastSend = millis();
-
-        if (gps.location.isValid()) {
-            double lat = gps.location.lat();
-            double lng = gps.location.lng();
-
-            // Susiha ang distansya gikan sa balay
-            double distance = calculateDistance(HOME_LAT, HOME_LNG, lat, lng);
-            Serial.printf("📏 Distance from home: %.3f km\n", distance);
-
-            String safetyStatus = "safe";
-            if (distance > MAX_DISTANCE_KM) {
-                safetyStatus = "danger";
-                digitalWrite(BUZZER_PIN, LOW); // Mo-on ang buzzer kung lumapas sa 1km
-                Serial.println("🚨 DANGER: Pet is outside the 1km safety zone! Buzzer ON.");
-            } else {
-                digitalWrite(BUZZER_PIN, HIGH); // Patay ang buzzer kung naa sa safe zone
-            }
-
-            // Ipadala ang lokasyon sa Supabase
-            sendLocation(lat, lng, safetyStatus);
-
-            // Basahon ang Heart Rate ug ipadala
-            int bpm = map(analogRead(HR_PIN), 0, 4095, 60, 120);
-            if (bpm >= 40 && bpm <= 200) {
-                sendHeartRate(bpm);
-            }
-        } else {
-            Serial.println("⚠️ Waiting for GPS fix...");
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f6f9;
         }
-    }
-}
+        header {
+            background-color: #1e293b;
+            color: white;
+            padding: 15px 20px;
+            font-size: 1.25rem;
+            font-weight: bold;
+        }
+        #map {
+            height: 80vh;
+            width: 100%;
+        }
+        #status-panel {
+            padding: 15px 20px;
+            background: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 -2px 5px rgba(0,0,0,0.1);
+        }
+        .badge {
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-weight: bold;
+            color: white;
+        }
+        .safe { background-color: #22c55e; }
+        .danger { background-color: #ef4444; }
+    </style>
+</head>
+<body>
 
-void sendLocation(double lat, double lng, String status) {
-    HTTPClient http;
-    String url = String(SUPABASE_URL) + "/rest/v1/location_logs";
+    <header>🐾 PetSafe IoT - Real-Time Pet Tracking System</header>
 
-    http.begin(url);
-    http.addHeader("Content-Type", "application/json");
-    http.addHeader("apikey", SUPABASE_KEY);
-    http.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
-    http.addHeader("Prefer", "return=minimal");
+    <!-- Mapa -->
+    <div id="map"></div>
 
-    String payload = "{";
-    payload += "\"pet_id\":" + String(PET_ID) + ",";
-    payload += "\"latitude\":" + String(lat, 6) + ",";
-    payload += "\"longitude\":" + String(lng, 6) + ",";
-    payload += "\"safety_status\":\"" + status + "\"";
-    payload += "}";
+    <!-- Status Panel sa ubos sa mapa -->
+    <div id="status-panel">
+        <div>
+            <strong>Status:</strong> <span id="safety-status" class="badge safe">Nagpahulat sa data...</span>
+        </div>
+        <div>
+            <strong>Coordinates:</strong> <span id="coords-text">Wala pa'y GPS fix</span>
+        </div>
+        <div>
+            <strong>Kataposang Update:</strong> <span id="last-update">-</span>
+        </div>
+    </div>
 
-    int httpCode = http.POST(payload);
-    if (httpCode > 0) {
-        Serial.printf("✅ Location sent HTTP %d\n", httpCode);
-    } else {
-        Serial.printf("❌ Location Failed: %s\n", http.errorToString(httpCode).c_str());
-    }
-    http.end();
-}
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-void sendHeartRate(int bpm) {
-    HTTPClient http;
-    String url = String(SUPABASE_URL) + "/rest/v1/heart_rate_logs";
+    <script>
+        // Supabase Credentials gikan sa imong ESP32 code
+        const SUPABASE_URL = "https://sqpneocapdetejhsfpzk.supabase.co";
+        const SUPABASE_KEY = "sb_publishable_A0NA-xH5v88AzikE_F73Tg_zc84qRZW";
 
-    http.begin(url);
-    http.addHeader("Content-Type", "application/json");
-    http.addHeader("apikey", SUPABASE_KEY);
-    http.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
-    http.addHeader("Prefer", "return=minimal");
+        // Sugdan ang mapa (Default center sa Bohol / Pilipinas, i-adjust dayon sa code kung naa nay data)
+        var map = L.map('map').setView([9.8500, 124.1433], 15);
 
-    String payload = "{";
-    payload += "\"pet_id\":" + String(PET_ID) + ",";
-    payload += "\"heart_rate\":" + String(bpm);
-    payload += "}";
+        // Butangan og OpenStreetMap tiles
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
 
-    int httpCode = http.POST(payload);
-    if (httpCode > 0) {
-        Serial.printf("✅ HR HTTP %d\n", httpCode);
-    } else {
-        Serial.printf("❌ HR Failed\n");
-    }
-    http.end();
-}
+        // Himoan og Marker ang iro
+        var petMarker = L.marker([9.8500, 124.1433]).addTo(map)
+            .bindPopup("<b>Ang Imong Iro (Buddy)</b><br>Nag-atabang sa live GPS update...")
+            .openPopup();
+
+        var isFirstCenter = true;
+
+        // Function sa pagkuha sa pinakabag-ong lokasyon gikan sa Supabase table nga 'location_logs'
+        async function fetchLatestPetLocation() {
+            try {
+                let response = await fetch(`${SUPABASE_URL}/rest/v1/location_logs?select=*&order=id.desc&limit=1`, {
+                    headers: {
+                        'apikey': SUPABASE_KEY,
+                        'Authorization': `Bearer ${SUPABASE_KEY}`
+                    }
+                });
+                
+                let data = await response.json();
+                if (data.length > 0) {
+                    let latest = data[0];
+                    let lat = latest.latitude;
+                    let lng = latest.longitude;
+                    let safetyStatus = latest.safety_status; // "safe" o "danger"
+                    
+                    console.log("Live GPS gikan sa ESP32:", lat, lng, "Status:", safetyStatus);
+
+                    // I-update ang posisyon sa marker sa mapa
+                    petMarker.setLatLng([lat, lng]);
+                    
+                    // I-center ang mapa sa iro kung kana ang unang kuha o gusto nimo sundon
+                    if (isFirstCenter) {
+                        map.setView([lat, lng], 17);
+                        isFirstCenter = false;
+                    }
+
+                    // I-update ang UI text sa ubos
+                    document.getElementById("coords-text").innerText = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+                    document.getElementById("last-update").innerText = new Date().toLocaleTimeString();
+
+                    let badge = document.getElementById("safety-status");
+                    if (safetyStatus === "danger") {
+                        badge.className = "badge danger";
+                        badge.innerText = "🚨 DANGER (Lapas sa 1km Zone!)";
+                    } else {
+                        badge.className = "badge safe";
+                        badge.innerText = "✅ SAFE (Naa sa Safe Zone)";
+                    }
+                }
+            } catch (error) {
+                console.error("Error sa pagkuha sa location gikan sa Supabase:", error);
+            }
+        }
+
+        // Tawgon ang function kada 4 ka segundos aron mag-sige og update ang live map
+        setInterval(fetchLatestPetLocation, 4000);
+
+        // Tawgon dayon pag-load sa page
+        fetchLatestPetLocation();
+    </script>
+</body>
+</html>
