@@ -66,11 +66,18 @@
 
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <!-- Supabase JS Client (Alang sa real-time WebSocket) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
     <script>
         // Supabase Credentials gikan sa imong ESP32 code
         const SUPABASE_URL = "https://sqpneocapdetejhsfpzk.supabase.co";
         const SUPABASE_KEY = "sb_publishable_A0NA-xH5v88AzikE_F73Tg_zc84qRZW";
+
+        // Initialize Supabase Client
+        const { createClient } = supabase;
+        const _supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
         // Sugdan ang mapa (Default center sa Bohol / Pilipinas, i-adjust dayon sa code kung naa nay data)
         var map = L.map('map').setView([9.8500, 124.1433], 15);
@@ -83,62 +90,72 @@
 
         // Himoan og Marker ang iro
         var petMarker = L.marker([9.8500, 124.1433]).addTo(map)
-            .bindPopup("<b>Ang Imong Iro (Buddy)</b><br>Nag-atabang sa live GPS update...")
+            .bindPopup("<b>Ang Imong Iro (Buddy)</b><br>Naghulat sa real-time WebSocket...")
             .openPopup();
 
         var isFirstCenter = true;
 
-        // Function sa pagkuha sa pinakabag-ong lokasyon gikan sa Supabase table nga 'location_logs'
-        async function fetchLatestPetLocation() {
+        // Function sa pag-update sa UI ug Mapa
+        function updatePetUI(lat, lng, safetyStatus) {
+            console.log("Live GPS Data gikan sa Network:", lat, lng, "Status:", safetyStatus);
+
+            // I-update ang posisyon sa marker sa mapa
+            petMarker.setLatLng([lat, lng]);
+            
+            // I-center ang mapa sa iro sa unang pagkuha sa data
+            if (isFirstCenter) {
+                map.setView([lat, lng], 17);
+                isFirstCenter = false;
+            }
+
+            // I-update ang UI text sa ubos
+            document.getElementById("coords-text").innerText = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+            document.getElementById("last-update").innerText = new Date().toLocaleTimeString();
+
+            let badge = document.getElementById("safety-status");
+            if (safetyStatus === "danger") {
+                badge.className = "badge danger";
+                badge.innerText = "🚨 DANGER (Lapas sa 1km Zone!)";
+            } else {
+                badge.className = "badge safe";
+                badge.innerText = "✅ SAFE (Naa sa Safe Zone)";
+            }
+        }
+
+        // 1. Kuhaon ang pinakabag-ong lokasyon sa pag-load sa panid (Initial fetch)
+        async function fetchInitialLocation() {
             try {
-                let response = await fetch(`${SUPABASE_URL}/rest/v1/location_logs?select=*&order=id.desc&limit=1`, {
-                    headers: {
-                        'apikey': SUPABASE_KEY,
-                        'Authorization': `Bearer ${SUPABASE_KEY}`
-                    }
-                });
-                
-                let data = await response.json();
-                if (data.length > 0) {
+                let { data, error } = await _supabase
+                    .from('location_logs')
+                    .select('*')
+                    .order('id', { ascending: false })
+                    .limit(1);
+
+                if (error) throw error;
+
+                if (data && data.length > 0) {
                     let latest = data[0];
-                    let lat = latest.latitude;
-                    let lng = latest.longitude;
-                    let safetyStatus = latest.safety_status; // "safe" o "danger"
-                    
-                    console.log("Live GPS gikan sa ESP32:", lat, lng, "Status:", safetyStatus);
-
-                    // I-update ang posisyon sa marker sa mapa
-                    petMarker.setLatLng([lat, lng]);
-                    
-                    // I-center ang mapa sa iro kung kana ang unang kuha o gusto nimo sundon
-                    if (isFirstCenter) {
-                        map.setView([lat, lng], 17);
-                        isFirstCenter = false;
-                    }
-
-                    // I-update ang UI text sa ubos
-                    document.getElementById("coords-text").innerText = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-                    document.getElementById("last-update").innerText = new Date().toLocaleTimeString();
-
-                    let badge = document.getElementById("safety-status");
-                    if (safetyStatus === "danger") {
-                        badge.className = "badge danger";
-                        badge.innerText = "🚨 DANGER (Lapas sa 1km Zone!)";
-                    } else {
-                        badge.className = "badge safe";
-                        badge.innerText = "✅ SAFE (Naa sa Safe Zone)";
-                    }
+                    updatePetUI(latest.latitude, latest.longitude, latest.safety_status);
                 }
             } catch (error) {
                 console.error("Error sa pagkuha sa location gikan sa Supabase:", error);
             }
         }
 
-        // Tawgon ang function kada 4 ka segundos aron mag-sige og update ang live map
-        setInterval(fetchLatestPetLocation, 4000);
-
         // Tawgon dayon pag-load sa page
-        fetchLatestPetLocation();
+        fetchInitialLocation();
+
+        // 2. Maminaw sa Realtime Database Changes (WebSocket - instant update nga walay sige og interval/refresh)
+        const locationChannel = _supabase.channel('public:location_logs')
+            .on(
+                'postgres_changes',
+                { event: 'INSERT', schema: 'public', table: 'location_logs' },
+                (payload) => {
+                    let latest = payload.new;
+                    updatePetUI(latest.latitude, latest.longitude, latest.safety_status);
+                }
+            )
+            .subscribe();
     </script>
 </body>
 </html>
