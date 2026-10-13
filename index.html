@@ -3,128 +3,413 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PetSafe IoT - Live Tracking (Real GPS)</title>
+<title>PetSafe IoT - Live Tracking</title>
 
 <!-- Leaflet CSS -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
 <style>
-body {
-font-family: Arial, sans-serif;
-margin: 0;
-padding: 0;
-background-color: #f4f6f9;
-}
-header {
-background-color: #1e293b;
-color: white;
-padding: 15px 20px;
-font-size: 1.25rem;
-font-weight: bold;
-}
-#map {
-height: 80vh;
-width: 100%;
-}
-#status-panel {
-padding: 15px 20px;
-background: white;
-display: flex;
-justify-content: space-between;
-align-items: center;
-box-shadow: 0 -2px 5px rgba(0,0,0,0.1);
-}
-.badge {
-padding: 6px 12px;
-border-radius: 20px;
-font-weight: bold;
-color: white;
-}
-.safe { background-color: #22c55e; }
-.danger { background-color: #ef4444; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+        font-family: Inter, -apple-system, BlinkMacSystemFont,
+                     "Segoe UI", Roboto, Arial, sans-serif;
+        background: #f1f5f9;
+        color: #0f172a;
+        min-height: 100vh;
+    }
+
+    /* SIDEBAR */
+    .sidebar {
+        position: fixed; top: 0; left: 0; bottom: 0;
+        width: 250px; background: #0f172a; color: white;
+        padding: 24px 16px;
+        display: flex; flex-direction: column; z-index: 1000;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; padding: 5px 10px 30px; }
+    .brand-icon {
+        width: 42px; height: 42px; border-radius: 12px;
+        display: flex; align-items: center; justify-content: center;
+        background: linear-gradient(135deg, #2563eb, #38bdf8);
+        font-size: 21px;
+    }
+    .brand h2 { font-size: 17px; font-weight: 700; }
+    .brand span { display: block; color: #94a3b8; font-size: 11px; margin-top: 2px; }
+
+    .nav-title {
+        color: #64748b; font-size: 10px; font-weight: 700;
+        letter-spacing: 1px; text-transform: uppercase;
+        padding: 0 12px 10px;
+    }
+    .nav { display: flex; flex-direction: column; gap: 5px; }
+    .nav a {
+        display: flex; align-items: center; gap: 12px;
+        padding: 12px; color: #cbd5e1; text-decoration: none;
+        border-radius: 9px; font-size: 14px; transition: 0.2s ease;
+    }
+    .nav a:hover { background: #1e293b; color: white; }
+    .nav a.active {
+        background: #2563eb; color: white;
+        box-shadow: 0 5px 15px rgba(37, 99, 235, 0.25);
+    }
+    .nav-icon { width: 22px; text-align: center; font-size: 17px; }
+
+    .sidebar-footer {
+        margin-top: auto; padding-top: 16px;
+        border-top: 1px solid #1e293b;
+    }
+    .user-info {
+        display: flex; align-items: center; gap: 10px;
+        padding: 10px; margin-bottom: 8px;
+    }
+    .avatar {
+        width: 38px; height: 38px; border-radius: 50%;
+        background: #2563eb; display: flex;
+        align-items: center; justify-content: center;
+        font-weight: 700; color: white;
+    }
+    .user-details strong {
+        display: block; font-size: 13px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .user-details span { color: #94a3b8; font-size: 11px; }
+
+    .logout-btn {
+        display: flex; align-items: center; gap: 10px;
+        padding: 11px 12px; background: #1e293b;
+        color: #fca5a5; text-decoration: none;
+        border-radius: 9px; font-size: 13px; font-weight: 600;
+        transition: 0.2s ease; border: 1px solid #334155;
+    }
+    .logout-btn:hover { background: #7f1d1d; color: white; }
+
+    /* MAIN */
+    .main { margin-left: 250px; min-height: 100vh; }
+
+    .topbar {
+        height: 76px; background: white;
+        border-bottom: 1px solid #e2e8f0;
+        display: flex; align-items: center;
+        justify-content: space-between;
+        padding: 0 32px;
+    }
+    .topbar h1 { font-size: 20px; font-weight: 700; }
+    .topbar p { color: #64748b; font-size: 13px; margin-top: 3px; }
+
+    .content { padding: 30px 32px; }
+
+    .welcome { margin-bottom: 25px; }
+    .welcome h2 { font-size: 25px; margin-bottom: 5px; }
+    .welcome p { color: #64748b; font-size: 14px; }
+
+    /* STAT CARDS */
+    .stats {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 18px; margin-bottom: 28px;
+    }
+    .stat-card {
+        background: white; border: 1px solid #e2e8f0;
+        border-radius: 14px; padding: 20px;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .stat-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 25px rgba(15, 23, 42, 0.07);
+    }
+    .stat-top {
+        display: flex; justify-content: space-between;
+        align-items: center; margin-bottom: 15px;
+    }
+    .stat-icon {
+        width: 42px; height: 42px; border-radius: 11px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 19px;
+    }
+    .blue { background: #eff6ff; color: #2563eb; }
+    .green { background: #ecfdf5; color: #059669; }
+    .orange { background: #fff7ed; color: #ea580c; }
+    .red { background: #fef2f2; color: #dc2626; }
+
+    .stat-card h3 { font-size: 25px; margin-bottom: 3px; }
+    .stat-card p { color: #64748b; font-size: 12px; }
+
+    .status { display: inline-flex; align-items: center; gap: 5px;
+              font-size: 11px; color: #059669; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: #10b981; }
+
+    /* MAP CARD */
+    .map-card {
+        background: white; border: 1px solid #e2e8f0;
+        border-radius: 14px; padding: 22px; margin-bottom: 20px;
+    }
+    .map-card h3 { font-size: 16px; margin-bottom: 15px;
+                   display: flex; align-items: center; gap: 8px; }
+
+    #map {
+        height: 500px;
+        width: 100%;
+        border-radius: 11px;
+        border: 1px solid #e2e8f0;
+        z-index: 1;
+    }
+
+    /* STATUS PANEL */
+    .status-panel {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 15px;
+        margin-top: 20px;
+    }
+    .status-box {
+        background: #f8fafc; border: 1px solid #e2e8f0;
+        border-radius: 10px; padding: 14px;
+    }
+    .status-box label {
+        display: block; font-size: 11px;
+        font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.5px; color: #64748b;
+        margin-bottom: 6px;
+    }
+    .status-box .value {
+        font-size: 14px; font-weight: 600; color: #0f172a;
+    }
+
+    .badge {
+        display: inline-block;
+        padding: 6px 12px; border-radius: 20px;
+        font-weight: 700; font-size: 12px; color: white;
+    }
+    .badge.safe { background-color: #22c55e; }
+    .badge.danger { background-color: #ef4444; }
+    .badge.waiting { background-color: #f59e0b; }
+
+    /* RESPONSIVE */
+    @media (max-width: 1100px) {
+        .stats { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 760px) {
+        .sidebar { width: 70px; padding: 20px 10px; }
+        .brand { justify-content: center; }
+        .brand-text, .nav-title,
+        .nav a span:not(.nav-icon),
+        .user-details,
+        .logout-btn span:not(.logout-icon) { display: none; }
+        .nav a { justify-content: center; }
+        .main { margin-left: 70px; }
+        .content { padding: 22px 18px; }
+        .stats { grid-template-columns: 1fr; }
+        .status-panel { grid-template-columns: 1fr; }
+        #map { height: 400px; }
+    }
 </style>
 </head>
 <body>
 
-<header>🐾 PetSafe IoT - Real-Time Device GPS Tracking</header>
+<!-- SIDEBAR -->
+<aside class="sidebar">
+    <div class="brand">
+        <div class="brand-icon">🐾</div>
+        <div class="brand-text">
+            <h2>PetSafe</h2>
+            <span>Monitoring System</span>
+        </div>
+    </div>
 
-<div id="map"></div>
+    <div class="nav-title">Main Menu</div>
 
-<div id="status-panel">
-<div>
-<strong>Status:</strong> <span id="safety-status" class="badge safe">Naghulat sa GPS...</span>
-</div>
-<div>
-<strong>Imong GPS Coordinates:</strong> <span id="coords-text">Nag-kuha sa tinuod nga GPS...</span>
-</div>
-<div>
-<strong>Kataposang Update:</strong> <span id="last-update">-</span>
-</div>
-</div>
+    <nav class="nav">
+        <a href="index.html" class="active">
+            <span class="nav-icon">📊</span>
+            <span>Dashboard</span>
+        </a>
+        <a href="pets.html">
+            <span class="nav-icon">🐶</span>
+            <span>My Pets</span>
+        </a>
+        <a href="location.html">
+            <span class="nav-icon">📍</span>
+            <span>Location</span>
+        </a>
+        <a href="logs.html">
+            <span class="nav-icon">🔔</span>
+            <span>Safety Alerts</span>
+        </a>
+        <a href="monitoring.html">
+            <span class="nav-icon">📡</span>
+            <span>Monitoring</span>
+        </a>
+    </nav>
+
+    <div class="sidebar-footer">
+        <div class="user-info">
+            <div class="avatar">A</div>
+            <div class="user-details">
+                <strong>admin</strong>
+                <span>ADMIN</span>
+            </div>
+        </div>
+        <a href="login.html" class="logout-btn">
+            <span>🚪</span>
+            <span>Logout</span>
+        </a>
+    </div>
+</aside>
+
+<!-- MAIN -->
+<main class="main">
+
+    <header class="topbar">
+        <div>
+            <h1>Pet Safety Dashboard</h1>
+            <p>Monitor your pets and keep them safe.</p>
+        </div>
+    </header>
+
+    <section class="content">
+
+        <div class="welcome">
+            <h2>Welcome back, admin! 👋</h2>
+            <p>Here's an overview of your pet safety system.</p>
+        </div>
+
+        <!-- STATS -->
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-top">
+                    <div class="stat-icon blue">🐾</div>
+                    <span class="status"><span class="dot"></span> Active</span>
+                </div>
+                <h3>1</h3>
+                <p>Registered Pets</p>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-top">
+                    <div class="stat-icon green">📡</div>
+                    <span class="status"><span class="dot"></span> Online</span>
+                </div>
+                <h3>1</h3>
+                <p>Active Collars</p>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-top">
+                    <div class="stat-icon orange">📍</div>
+                </div>
+                <h3 id="locations-count">3</h3>
+                <p>Locations Recorded</p>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-top">
+                    <div class="stat-icon red">🔔</div>
+                </div>
+                <h3>1</h3>
+                <p>Safety Alerts</p>
+            </div>
+        </div>
+
+        <!-- LIVE MAP -->
+        <div class="map-card">
+            <h3>🗺️ Real-Time GPS Tracking</h3>
+            <div id="map"></div>
+
+            <div class="status-panel">
+                <div class="status-box">
+                    <label>Status</label>
+                    <span id="safety-status" class="badge waiting">
+                        ⏳ Naghulat sa GPS...
+                    </span>
+                </div>
+                <div class="status-box">
+                    <label>GPS Coordinates</label>
+                    <span class="value" id="coords-text">Nag-kuha sa GPS...</span>
+                </div>
+                <div class="status-box">
+                    <label>Last Update</label>
+                    <span class="value" id="last-update">—</span>
+                </div>
+            </div>
+        </div>
+
+    </section>
+</main>
 
 <!-- Leaflet JS -->
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
-// Sugdan ang mapa sa walay gi-hardcode nga pwesto (magsugod sa default, i-center dayon sa GPS)
-var map = L.map('map').setView([10.3157, 123.8854], 13); // Default center sa Cebu
+// =========================================================
+// MAP SETUP
+// =========================================================
+
+var map = L.map('map').setView([10.3157, 123.8854], 13); // Cebu default
 
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-maxZoom: 19,
-attribution: '&copy; OpenStreetMap contributors'
+    maxZoom: 19,
+    attribution: '© OpenStreetMap contributors'
 }).addTo(map);
 
 var petMarker = null;
 var isFirstCenter = true;
 
-// Gamiton ang tinuod nga Browser GPS (Geolocation API)
+// =========================================================
+// REAL GPS TRACKING
+// =========================================================
+
 if ("geolocation" in navigator) {
-navigator.geolocation.watchPosition(
-(position) => {
-let lat = position.coords.latitude;
-let lng = position.coords.longitude;
+    navigator.geolocation.watchPosition(
+        (position) => {
+            let lat = position.coords.latitude;
+            let lng = position.coords.longitude;
 
-console.log("Tinuod nga GPS sa imong Device:", lat, lng);
+            console.log("GPS:", lat, lng);
 
-// I-update ang UI text
-document.getElementById("coords-text").innerText = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-document.getElementById("last-update").innerText = new Date().toLocaleTimeString();
+            // Update UI
+            document.getElementById("coords-text").innerText =
+                `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+            document.getElementById("last-update").innerText =
+                new Date().toLocaleTimeString();
 
-// Kung wala pa ma-himo ang marker, himoa. Kung naa na, i-move lang.
-if (!petMarker) {
-petMarker = L.marker([lat, lng]).addTo(map)
-.bindPopup("<b>Imong Live GPS Location</b>")
-.openPopup();
+            // Marker
+            if (!petMarker) {
+                petMarker = L.marker([lat, lng]).addTo(map)
+                    .bindPopup("<b>🐾 Live GPS Location</b>")
+                    .openPopup();
+            } else {
+                petMarker.setLatLng([lat, lng]);
+            }
+
+            // First center
+            if (isFirstCenter) {
+                map.setView([lat, lng], 17);
+                isFirstCenter = false;
+            }
+
+            // Status badge
+            let badge = document.getElementById("safety-status");
+            badge.className = "badge safe";
+            badge.innerText = "✅ GPS Connected (Active)";
+        },
+        (error) => {
+            console.error("GPS Error:", error.message);
+            document.getElementById("coords-text").innerText =
+                "Dili makuha ang GPS (I-allow ang Location)";
+
+            let badge = document.getElementById("safety-status");
+            badge.className = "badge danger";
+            badge.innerText = "🚨 GPS Error";
+        },
+        {
+            enableHighAccuracy: true,
+            maximumAge: 0,
+            timeout: 10000
+        }
+    );
 } else {
-petMarker.setLatLng([lat, lng]);
-}
-
-// I-center dayon sa imong saktong lokasyon (Cebu man o Bohol) sa unang kuha
-if (isFirstCenter) {
-map.setView([lat, lng], 17);
-isFirstCenter = false;
-}
-
-let badge = document.getElementById("safety-status");
-badge.className = "badge safe";
-badge.innerText = "✅ GPS Connected (Aktibo)";
-},
-(error) => {
-console.error("Error sa pagkuha sa GPS:", error.message);
-document.getElementById("coords-text").innerText = "Dili makuha ang GPS (I-allow ang Location Permission)";
-let badge = document.getElementById("safety-status");
-badge.className = "badge danger";
-badge.innerText = "🚨 GPS Error / Gihikawan";
-},
-{
-enableHighAccuracy: true, // Siguraduhon nga sakto ug kusog ang GPS
-maximumAge: 0,
-timeout: 10000
-}
-);
-} else {
-alert("Ang imong browser kay wala nagasuporta sa Geolocation.");
+    alert("Ang browser dili mo-support sa Geolocation.");
 }
 </script>
+
 </body>
 </html>
