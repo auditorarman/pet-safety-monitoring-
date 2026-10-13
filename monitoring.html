@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Monitoring | PetSafe</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Inter, -apple-system, BlinkMacSystemFont,
+           "Segoe UI", Roboto, Arial, sans-serif;
+           background: #f1f5f9; color: #0f172a; min-height: 100vh; }
+    .sidebar {
+        position: fixed; top: 0; left: 0; bottom: 0;
+        width: 250px; background: #0f172a; color: white;
+        padding: 24px 16px;
+        display: flex; flex-direction: column; z-index: 1000;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; padding: 5px 10px 30px; }
+    .brand-icon {
+        width: 42px; height: 42px; border-radius: 12px;
+        display: flex; align-items: center; justify-content: center;
+        background: linear-gradient(135deg, #2563eb, #38bdf8); font-size: 21px;
+    }
+    .brand h2 { font-size: 17px; }
+    .brand span { display: block; color: #94a3b8; font-size: 11px; margin-top: 2px; }
+    .nav-title { color: #64748b; font-size: 10px; font-weight: 700;
+                 letter-spacing: 1px; text-transform: uppercase; padding: 0 12px 10px; }
+    .nav { display: flex; flex-direction: column; gap: 5px; }
+    .nav a { display: flex; align-items: center; gap: 12px;
+             padding: 12px; color: #cbd5e1; text-decoration: none;
+             border-radius: 9px; font-size: 14px; transition: 0.2s ease; }
+    .nav a:hover { background: #1e293b; color: white; }
+    .nav a.active { background: #2563eb; color: white;
+                    box-shadow: 0 5px 15px rgba(37, 99, 235, 0.25); }
+    .nav-icon { width: 22px; text-align: center; font-size: 17px; }
+    .sidebar-footer { margin-top: auto; padding-top: 16px; border-top: 1px solid #1e293b; }
+    .user-info { display: flex; align-items: center; gap: 10px;
+                 padding: 10px; margin-bottom: 8px; }
+    .avatar { width: 38px; height: 38px; border-radius: 50%;
+              background: #2563eb; display: flex; align-items: center;
+              justify-content: center; font-weight: 700; color: white; }
+    .user-details strong { display: block; font-size: 13px; }
+    .user-details span { color: #94a3b8; font-size: 11px; }
+    .logout-btn { display: flex; align-items: center; gap: 10px;
+                  padding: 11px 12px; background: #1e293b;
+                  color: #fca5a5; text-decoration: none;
+                  border-radius: 9px; font-size: 13px; font-weight: 600;
+                  transition: 0.2s ease; border: 1px solid #334155; cursor: pointer; }
+    .logout-btn:hover { background: #7f1d1d; color: white; }
+    .main { margin-left: 250px; min-height: 100vh; }
+    .topbar { height: 76px; background: white; border-bottom: 1px solid #e2e8f0;
+              display: flex; align-items: center; justify-content: space-between;
+              padding: 0 32px; }
+    .topbar h1 { font-size: 20px; font-weight: 700; }
+    .topbar p { color: #64748b; font-size: 13px; margin-top: 3px; }
+    .content { padding: 30px 32px; }
+    .page-title h2 { font-size: 25px; margin-bottom: 5px; }
+    .page-title p { color: #64748b; font-size: 14px; margin-bottom: 22px; }
+    .monitor-grid { display: grid; grid-template-columns: 1fr 320px; gap: 20px; }
+    .map-panel { background: white; border: 1px solid #e2e8f0;
+                 border-radius: 14px; padding: 0; overflow: hidden; }
+    #map { width: 100%; height: 600px; border-radius: 14px; z-index: 1; }
+    .pet-list { background: white; border: 1px solid #e2e8f0;
+                border-radius: 14px; padding: 18px;
+                max-height: 600px; overflow-y: auto; }
+    .pet-list h3 { font-size: 15px; margin-bottom: 15px;
+                   padding-bottom: 12px; border-bottom: 1px solid #f1f5f9; }
+    .pet-item { display: flex; align-items: flex-start; gap: 12px;
+                padding: 12px; border-radius: 10px; margin-bottom: 8px;
+                cursor: pointer; transition: 0.2s;
+                border: 1px solid transparent; }
+    .pet-item:hover { background: #f8fafc; border-color: #e2e8f0; }
+    .pet-emoji { width: 38px; height: 38px; border-radius: 10px;
+                 background: #eff6ff; display: flex; align-items: center;
+                 justify-content: center; font-size: 19px; flex-shrink: 0; }
+    .pet-info { flex: 1; min-width: 0; }
+    .pet-info strong { display: block; font-size: 13px; margin-bottom: 3px; }
+    .pet-info span { color: #64748b; font-size: 11px; display: block; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 20px;
+             font-size: 9px; font-weight: 700; text-transform: uppercase; margin-top: 4px; }
+    .badge-safe { background: #ecfdf5; color: #059669; }
+    .badge-warning { background: #fff7ed; color: #ea580c; }
+    .badge-danger { background: #fef2f2; color: #dc2626; }
+    .badge-none { background: #f1f5f9; color: #64748b; }
+    .empty { text-align: center; padding: 60px 20px; color: #64748b; }
+    .empty-icon { font-size: 50px; margin-bottom: 15px; }
+    .empty h3 { color: #334155; font-size: 17px; margin-bottom: 6px; }
+    .footer { text-align: center; color: #94a3b8;
+              font-size: 11px; padding: 25px; }
+    @media (max-width: 1100px) { .monitor-grid { grid-template-columns: 1fr; } }
+    @media (max-width: 760px) {
+        .sidebar { width: 70px; padding: 20px 10px; }
+        .brand { justify-content: center; }
+        .brand-text, .nav-title,
+        .nav a span:not(.nav-icon),
+        .user-details,
+        .logout-btn span:not(.logout-icon) { display: none; }
+        .nav a { justify-content: center; }
+        .main { margin-left: 70px; }
+        .content { padding: 22px 18px; }
+        #map { height: 400px; }
+    }
+</style>
+</head>
+<body>
+
+<aside class="sidebar">
+    <div class="brand">
+        <div class="brand-icon">🐾</div>
+        <div class="brand-text">
+            <h2>PetSafe</h2>
+            <span>Monitoring System</span>
+        </div>
+    </div>
+    <div class="nav-title">Main Menu</div>
+    <nav class="nav">
+        <a href="index.html"><span class="nav-icon">📊</span><span>Dashboard</span></a>
+        <a href="pets.html"><span class="nav-icon">🐶</span><span>My Pets</span></a>
+        <a href="location.html"><span class="nav-icon">📍</span><span>Location</span></a>
+        <a href="logs.html"><span class="nav-icon">🔔</span><span>Safety Alerts</span></a>
+        <a href="monitoring.html" class="active"><span class="nav-icon">📡</span><span>Monitoring</span></a>
+    </nav>
+    <div class="sidebar-footer">
+        <div class="user-info">
+            <div class="avatar" id="userAvatar">A</div>
+            <div class="user-details">
+                <strong id="userName">admin</strong>
+                <span id="userRole">ADMIN</span>
+            </div>
+        </div>
+        <a class="logout-btn" onclick="logout()"><span>🚪</span><span>Logout</span></a>
+    </div>
+</aside>
+
+<main class="main">
+    <header class="topbar">
+        <div>
+            <h1>Live Monitoring</h1>
+            <p>Real-time location tracking of your pets.</p>
+        </div>
+    </header>
+
+    <section class="content">
+        <div class="page-title">
+            <h2>📡 Live Monitoring</h2>
+            <p id="monitor-subtitle">Loading pets...</p>
+        </div>
+
+        <div class="monitor-grid">
+            <div class="map-panel"><div id="map"></div></div>
+            <div class="pet-list">
+                <h3>🐾 Your Pets</h3>
+                <div id="pets-list">⏳ Loading...</div>
+            </div>
+        </div>
+
+        <div class="footer">PetSafe Monitoring System</div>
+    </section>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/supabase.js"></script>
+<script>
+    const user = requireLogin();
+    if (user) {
+        document.getElementById('userAvatar').textContent = user.username[0].toUpperCase();
+        document.getElementById('userName').textContent = user.username;
+        document.getElementById('userRole').textContent = user.role || 'User';
+    }
+
+    // Map setup
+    const map = L.map('map').setView([12.8797, 121.7740], 6);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    const markers = [];
+
+    async function loadMonitoring() {
+        const { data: pets } = await supabaseClient.from('pets').select('*');
+        const { data: logs } = await supabaseClient
+            .from('location_logs')
+            .select('*')
+            .order('date_time', { ascending: false });
+
+        const petMap = {};
+        (pets || []).forEach(p => petMap[p.id] = p);
+
+        // Latest location per pet
+        const latest = {};
+        (logs || []).forEach(log => {
+            if (!latest[log.pet_id]) latest[log.pet_id] = log;
+        });
+
+        const petsWithLoc = Object.keys(latest).length;
+
+        document.getElementById('monitor-subtitle').textContent =
+            `${(pets || []).length} pet${(pets || []).length !== 1 ? 's' : ''} • ${petsWithLoc} with location data`;
+
+        // Build markers
+        markers.forEach(m => map.removeLayer(m));
+        markers.length = 0;
+
+        let listHtml = '';
+
+        (pets || []).forEach(pet => {
+            const loc = latest[pet.id];
+            const species = (pet.species || '').toLowerCase();
+            let emoji = '🐾';
+            if (species.includes('dog')) emoji = '🐶';
+            else if (species.includes('cat')) emoji = '🐱';
+            else if (species.includes('bird')) emoji = '🐦';
+
+            let badgeClass = 'badge-none';
+            let badgeText = 'No Data';
+
+            if (loc) {
+                const status = (loc.safety_status || '').toLowerCase();
+                if (status === 'safe') { badgeClass = 'badge-safe'; badgeText = 'Safe'; }
+                else if (status === 'warning') { badgeClass = 'badge-warning'; badgeText = 'Warning'; }
+                else if (status === 'danger') { badgeClass = 'badge-danger'; badgeText = 'Danger'; }
+            }
+
+            listHtml += `
+                <div class="pet-item" onclick="focusPet(${pet.id})">
+                    <div class="pet-emoji">${emoji}</div>
+                    <div class="pet-info">
+                        <strong>${pet.pet_name}</strong>
+                        <span>${pet.species || '-'}</span>
+                        <span class="badge ${badgeClass}">${badgeText}</span>
+                    </div>
+                </div>`;
+
+            // Marker
+            if (loc) {
+                const lat = parseFloat(loc.latitude);
+                const lng = parseFloat(loc.longitude);
+                const m = L.marker([lat, lng]).addTo(map)
+                    .bindPopup(`<b>${emoji} ${pet.pet_name}</b><br>
+                                Status: ${loc.safety_status}<br>
+                                Last seen: ${loc.date_time}`);
+                m.petId = pet.id;
+                markers.push(m);
+            }
+        });
+
+        document.getElementById('pets-list').innerHTML =
+            listHtml || '<div style="color:#94a3b8; text-align:center; padding:20px;">No pets yet</div>';
+
+        // Fit bounds
+        if (markers.length > 0) {
+            const group = L.featureGroup(markers);
+            map.fitBounds(group.getBounds().pad(0.2));
+        }
+    }
+
+    function focusPet(petId) {
+        const marker = markers.find(m => m.petId === petId);
+        if (marker) {
+            map.setView(marker.getLatLng(), 15);
+            marker.openPopup();
+        }
+    }
+
+    loadMonitoring();
+</script>
+
+</body>
+</html>
