@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Location | PetSafe</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Inter, -apple-system, BlinkMacSystemFont,
+           "Segoe UI", Roboto, Arial, sans-serif;
+           background: #f1f5f9; color: #0f172a; min-height: 100vh; }
+    .sidebar {
+        position: fixed; top: 0; left: 0; bottom: 0;
+        width: 250px; background: #0f172a; color: white;
+        padding: 24px 16px;
+        display: flex; flex-direction: column; z-index: 1000;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; padding: 5px 10px 30px; }
+    .brand-icon {
+        width: 42px; height: 42px; border-radius: 12px;
+        display: flex; align-items: center; justify-content: center;
+        background: linear-gradient(135deg, #2563eb, #38bdf8); font-size: 21px;
+    }
+    .brand h2 { font-size: 17px; }
+    .brand span { display: block; color: #94a3b8; font-size: 11px; margin-top: 2px; }
+    .nav-title { color: #64748b; font-size: 10px; font-weight: 700;
+                 letter-spacing: 1px; text-transform: uppercase; padding: 0 12px 10px; }
+    .nav { display: flex; flex-direction: column; gap: 5px; }
+    .nav a { display: flex; align-items: center; gap: 12px;
+             padding: 12px; color: #cbd5e1; text-decoration: none;
+             border-radius: 9px; font-size: 14px; transition: 0.2s ease; }
+    .nav a:hover { background: #1e293b; color: white; }
+    .nav a.active { background: #2563eb; color: white;
+                    box-shadow: 0 5px 15px rgba(37, 99, 235, 0.25); }
+    .nav-icon { width: 22px; text-align: center; font-size: 17px; }
+    .sidebar-footer { margin-top: auto; padding-top: 16px;
+                      border-top: 1px solid #1e293b; }
+    .user-info { display: flex; align-items: center; gap: 10px;
+                 padding: 10px; margin-bottom: 8px; }
+    .avatar { width: 38px; height: 38px; border-radius: 50%;
+              background: #2563eb; display: flex; align-items: center;
+              justify-content: center; font-weight: 700; color: white; }
+    .user-details strong { display: block; font-size: 13px;
+                           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .user-details span { color: #94a3b8; font-size: 11px; }
+    .logout-btn { display: flex; align-items: center; gap: 10px;
+                  padding: 11px 12px; background: #1e293b;
+                  color: #fca5a5; text-decoration: none;
+                  border-radius: 9px; font-size: 13px; font-weight: 600;
+                  transition: 0.2s ease; border: 1px solid #334155; cursor: pointer; }
+    .logout-btn:hover { background: #7f1d1d; color: white; }
+    .main { margin-left: 250px; min-height: 100vh; }
+    .topbar { height: 76px; background: white; border-bottom: 1px solid #e2e8f0;
+              display: flex; align-items: center; justify-content: space-between;
+              padding: 0 32px; }
+    .topbar h1 { font-size: 20px; font-weight: 700; }
+    .topbar p { color: #64748b; font-size: 13px; margin-top: 3px; }
+    .content { padding: 30px 32px; }
+    .page-title h2 { font-size: 25px; margin-bottom: 5px; }
+    .page-title p { color: #64748b; font-size: 14px; margin-bottom: 22px; }
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr);
+             gap: 18px; margin-bottom: 22px; }
+    .stat-card { background: white; border: 1px solid #e2e8f0;
+                 border-radius: 14px; padding: 20px; }
+    .stat-icon { width: 42px; height: 42px; border-radius: 11px;
+                 display: flex; align-items: center; justify-content: center;
+                 margin-bottom: 14px; font-size: 19px; }
+    .blue { background: #eff6ff; color: #2563eb; }
+    .green { background: #ecfdf5; color: #059669; }
+    .orange { background: #fff7ed; color: #ea580c; }
+    .stat-card h3 { font-size: 24px; margin-bottom: 4px; }
+    .stat-card p { color: #64748b; font-size: 12px; }
+    .panel { background: white; border: 1px solid #e2e8f0;
+             border-radius: 14px; overflow: hidden; }
+    .table-wrapper { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 720px; }
+    th { background: #f8fafc; color: #64748b; text-align: left;
+         padding: 13px 20px; font-size: 11px; font-weight: 700;
+         text-transform: uppercase; letter-spacing: 0.5px;
+         border-bottom: 1px solid #e2e8f0; }
+    td { padding: 15px 20px; border-bottom: 1px solid #f1f5f9;
+         font-size: 13px; color: #334155; }
+    tbody tr:hover { background: #f8fafc; }
+    .badge { display: inline-block; padding: 4px 10px; border-radius: 20px;
+             font-size: 11px; font-weight: 600; }
+    .badge.safe { background: #ecfdf5; color: #047857; }
+    .badge.warning { background: #fff7ed; color: #c2410c; }
+    .badge.danger { background: #fef2f2; color: #b91c1c; }
+    .empty { text-align: center; padding: 70px 20px; color: #64748b; }
+    .empty-icon { font-size: 50px; margin-bottom: 15px; }
+    .empty h3 { color: #334155; font-size: 17px; margin-bottom: 6px; }
+    .map-btn { display: inline-flex; padding: 6px 11px; border-radius: 6px;
+               background: #eff6ff; color: #2563eb; text-decoration: none;
+               font-size: 12px; font-weight: 600; }
+    .footer { text-align: center; color: #94a3b8;
+              font-size: 11px; padding: 25px; }
+    @media (max-width: 760px) {
+        .sidebar { width: 70px; padding: 20px 10px; }
+        .brand { justify-content: center; }
+        .brand-text, .nav-title,
+        .nav a span:not(.nav-icon),
+        .user-details,
+        .logout-btn span:not(.logout-icon) { display: none; }
+        .nav a { justify-content: center; }
+        .main { margin-left: 70px; }
+        .content { padding: 22px 18px; }
+        .stats { grid-template-columns: 1fr; }
+    }
+</style>
+</head>
+<body>
+<aside class="sidebar">
+    <div class="brand">
+        <div class="brand-icon">🐾</div>
+        <div class="brand-text">
+            <h2>PetSafe</h2>
+            <span>Monitoring System</span>
+        </div>
+    </div>
+    <div class="nav-title">Main Menu</div>
+    <nav class="nav">
+        <a href="index.html"><span class="nav-icon">📊</span><span>Dashboard</span></a>
+        <a href="pets.html"><span class="nav-icon">🐶</span><span>My Pets</span></a>
+        <a href="location.html" class="active"><span class="nav-icon">📍</span><span>Location</span></a>
+        <a href="logs.html"><span class="nav-icon">🔔</span><span>Safety Alerts</span></a>
+        <a href="monitoring.html"><span class="nav-icon">📡</span><span>Monitoring</span></a>
+    </nav>
+    <div class="sidebar-footer">
+        <div class="user-info">
+            <div class="avatar" id="userAvatar">A</div>
+            <div class="user-details">
+                <strong id="userName">admin</strong>
+                <span id="userRole">ADMIN</span>
+            </div>
+        </div>
+        <a class="logout-btn" onclick="logout()"><span>🚪</span><span>Logout</span></a>
+    </div>
+</aside>
+<main class="main">
+    <header class="topbar">
+        <div>
+            <h1>Location Tracking</h1>
+            <p>Track your pet's current location.</p>
+        </div>
+    </header>
+    <section class="content">
+        <div class="page-title">
+            <h2>📍 Location History</h2>
+            <p>Review the recorded locations of your pets.</p>
+        </div>
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-icon blue">📍</div>
+                <h3 id="stat-records">0</h3>
+                <p>Location Records</p>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon green">🐾</div>
+                <h3 id="stat-pets-tracked">0</h3>
+                <p>Pets Tracked</p>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon orange">🕒</div>
+                <h3 id="stat-status">—</h3>
+                <p>Tracking Status</p>
+            </div>
+        </div>
+        <div class="panel">
+            <div id="content-area" style="padding: 60px 20px; text-align: center; color: #64748b;">
+                ⏳ Loading...
+            </div>
+        </div>
+        <div class="footer">PetSafe Monitoring System</div>
+    </section>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/supabase.js"></script>
+<script>
+    const user = requireLogin();
+    if (user) {
+        document.getElementById('userAvatar').textContent = user.username[0].toUpperCase();
+        document.getElementById('userName').textContent = user.username;
+        document.getElementById('userRole').textContent = user.role || 'User';
+    }
+    async function loadLocations() {
+        const area = document.getElementById('content-area');
+        // Fetch location logs with pet names
+        const { data: logs, error } = await supabaseClient
+            .from('location_logs')
+            .select('*')
+            .order('date_time', { ascending: false });
+        // Fetch pets
+        const { data: pets } = await supabaseClient.from('pets').select('*');
+        if (error) {
+            area.innerHTML = `<div style="color:#dc2626;">⚠️ Error: ${error.message}</div>`;
+            return;
+        }
+        // Stats
+        document.getElementById('stat-records').textContent = (logs || []).length;
+        // Unique pets tracked
+        const uniquePets = new Set((logs || []).map(l => l.pet_id));
+        document.getElementById('stat-pets-tracked').textContent = uniquePets.size;
+        document.getElementById('stat-status').textContent = (logs || []).length > 0 ? 'Active' : '—';
+        if (!logs || logs.length === 0) {
+            area.innerHTML = `
+                <div class="empty">
+                    <div class="empty-icon">📍</div>
+                    <h3>No location records yet</h3>
+                    <p>Location data will appear here once you add locations.</p>
+                </div>`;
+            return;
+        }
+        // Table
+        const petMap = {};
+        (pets || []).forEach(p => petMap[p.id] = p);
+        let rows = '';
+        logs.forEach(log => {
+            const pet = petMap[log.pet_id];
+            const petName = pet ? pet.pet_name : 'Unknown';
+            const status = (log.safety_status || 'unknown').toLowerCase();
+            const badgeClass = ['safe', 'warning', 'danger'].includes(status) ? status : 'warning';
+            rows += `
+                <tr>
+                    <td><strong>🐾 ${petName}</strong></td>
+                    <td style="font-family:monospace;font-size:12px;">
+                        Lat: ${parseFloat(log.latitude).toFixed(6)}<br>
+                        Lng: ${parseFloat(log.longitude).toFixed(6)}
+                    </td>
+                    <td><span class="badge ${badgeClass}">${log.safety_status || 'Unknown'}</span></td>
+                    <td>${log.date_time || '-'}</td>
+                    <td>
+                        <a class="map-btn"
+                           href="https://www.google.com/maps?q=${log.latitude},${log.longitude}"
+                           target="_blank">🗺️ View</a>
+                    </td>
+                </tr>`;
+        });
+        area.innerHTML = `
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Pet</th>
+                            <th>Coordinates</th>
+                            <th>Safety Status</th>
+                            <th>Date & Time</th>
+                            <th>Map</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>`;
+    }
+    loadLocations();
+</script>
+</body>
+</html>
