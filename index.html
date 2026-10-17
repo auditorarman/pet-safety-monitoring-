@@ -136,6 +136,8 @@
     .status { display: inline-flex; align-items: center; gap: 5px;
               font-size: 11px; color: #059669; }
     .dot { width: 7px; height: 7px; border-radius: 50%; background: #10b981; }
+    .status.offline { color: #64748b; }
+    .status.offline .dot { background: #94a3b8; }
 
     /* MAP CARD */
     .map-card {
@@ -248,7 +250,7 @@
                 <span>ADMIN</span>
             </div>
         </div>
-        <a href="login.html" class="logout-btn">
+        <a href="#" onclick="logout(); return false;" class="logout-btn">
             <span>🚪</span>
             <span>Logout</span>
         </a>
@@ -277,9 +279,9 @@
             <div class="stat-card">
                 <div class="stat-top">
                     <div class="stat-icon blue">🐾</div>
-                    <span class="status"><span class="dot"></span> Active</span>
+                    <span id="dashboard-collar-status" class="status"><span class="dot"></span><span>Waiting</span></span>
                 </div>
-                <h3>1</h3>
+                <h3 id="stat-pets">0</h3>
                 <p>Registered Pets</p>
             </div>
 
@@ -288,7 +290,7 @@
                     <div class="stat-icon green">📡</div>
                     <span class="status"><span class="dot"></span> Online</span>
                 </div>
-                <h3>1</h3>
+                <h3 id="stat-collars">0</h3>
                 <p>Active Collars</p>
             </div>
 
@@ -296,7 +298,7 @@
                 <div class="stat-top">
                     <div class="stat-icon orange">📍</div>
                 </div>
-                <h3 id="locations-count">3</h3>
+                <h3 id="locations-count">0</h3>
                 <p>Locations Recorded</p>
             </div>
 
@@ -304,7 +306,7 @@
                 <div class="stat-top">
                     <div class="stat-icon red">🔔</div>
                 </div>
-                <h3>1</h3>
+                <h3 id="stat-alerts">0</h3>
                 <p>Safety Alerts</p>
             </div>
         </div>
@@ -335,80 +337,180 @@
     </section>
 </main>
 
-<!-- Leaflet JS -->
+<!-- Leaflet and Supabase -->
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/supabase.js"></script>
 <script>
-// =========================================================
-// MAP SETUP
-// =========================================================
+    const dashboardUser = requireLogin();
 
-var map = L.map('map').setView([10.3157, 123.8854], 13); // Cebu default
+    // Dashboard map uses locations uploaded by the ESP32, NOT this computer's GPS.
+    const map = L.map('map').setView([12.8797, 121.7740], 6);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '© OpenStreetMap contributors'
-}).addTo(map);
+    const markersByPet = new Map();
+    let mapHasCentered = false;
+    let dashboardLoading = false;
+    const ONLINE_WINDOW_MS = 60000; // ESP32 uploads every 15 seconds
 
-var petMarker = null;
-var isFirstCenter = true;
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, char => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[char]));
+    }
 
-// =========================================================
-// REAL GPS TRACKING
-// =========================================================
+    function getCoordinates(row) {
+        const lat = Number(row?.latitude);
+        const lng = Number(row?.longitude);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+        if (lat === 0 && lng === 0) return null;
+        return { lat, lng };
+    }
 
-if ("geolocation" in navigator) {
-    navigator.geolocation.watchPosition(
-        (position) => {
-            let lat = position.coords.latitude;
-            let lng = position.coords.longitude;
-
-            console.log("GPS:", lat, lng);
-
-            // Update UI
-            document.getElementById("coords-text").innerText =
-                `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-            document.getElementById("last-update").innerText =
-                new Date().toLocaleTimeString();
-
-            // Marker
-            if (!petMarker) {
-                petMarker = L.marker([lat, lng]).addTo(map)
-                    .bindPopup("<b>🐾 Live GPS Location</b>")
-                    .openPopup();
-            } else {
-                petMarker.setLatLng([lat, lng]);
-            }
-
-            // First center
-            if (isFirstCenter) {
-                map.setView([lat, lng], 17);
-                isFirstCenter = false;
-            }
-
-            // Status badge
-            let badge = document.getElementById("safety-status");
-            badge.className = "badge safe";
-            badge.innerText = "✅ GPS Connected (Active)";
-        },
-        (error) => {
-            console.error("GPS Error:", error.message);
-            document.getElementById("coords-text").innerText =
-                "Dili makuha ang GPS (I-allow ang Location)";
-
-            let badge = document.getElementById("safety-status");
-            badge.className = "badge danger";
-            badge.innerText = "🚨 GPS Error";
-        },
-        {
-            enableHighAccuracy: true,
-            maximumAge: 0,
-            timeout: 10000
+    function parseTimestamp(value) {
+        if (!value) return 0;
+        let text = String(value).trim();
+        // Supabase/Postgres timestamp-without-time-zone values are assumed to be UTC.
+        if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(text)) {
+            text = text.replace(' ', 'T') + 'Z';
         }
-    );
-} else {
-    alert("Ang browser dili mo-support sa Geolocation.");
-}
+        const time = new Date(text).getTime();
+        return Number.isFinite(time) ? time : 0;
+    }
+    function getTimestamp(row) {
+        return parseTimestamp(row?.date_time);
+    }
+
+    function setGpsStatus(text, cssClass) {
+        const badge = document.getElementById('safety-status');
+        badge.className = 'badge ' + cssClass;
+        badge.textContent = text;
+    }
+
+    function updateStatusSummary(row, pet) {
+        if (!row) {
+            setGpsStatus('⏳ Waiting for ESP32 GPS data', 'waiting');
+            document.getElementById('coords-text').textContent = 'No valid collar coordinates have been uploaded yet.';
+            document.getElementById('last-update').textContent = '—';
+            return;
+        }
+
+        const coords = getCoordinates(row);
+        if (!coords) {
+            setGpsStatus('⚠️ Invalid GPS coordinates', 'danger');
+            document.getElementById('coords-text').textContent = 'The latest database row has invalid coordinates.';
+            document.getElementById('last-update').textContent = row.date_time ? new Date(parseTimestamp(row.date_time)).toLocaleString() : 'Timestamp missing';
+            return;
+        }
+
+        document.getElementById('coords-text').textContent = `${coords.lat.toFixed(6)}, ${coords.lng.toFixed(6)}`;
+        const timestamp = getTimestamp(row);
+        document.getElementById('last-update').textContent = timestamp ? new Date(timestamp).toLocaleString() : 'Timestamp missing — check date_time default';
+
+        const age = timestamp ? Date.now() - timestamp : Infinity;
+        if (age > ONLINE_WINDOW_MS) {
+            setGpsStatus('⚠️ Collar offline / old location', 'danger');
+        } else {
+            const status = String(row.safety_status || 'unknown').toLowerCase();
+            if (status === 'danger' || status === 'alert') setGpsStatus('🚨 Danger', 'danger');
+            else if (status === 'warning') setGpsStatus('⚠️ Warning', 'waiting');
+            else setGpsStatus('✅ GPS Connected', 'safe');
+        }
+    }
+
+    async function loadDashboard() {
+        if (dashboardLoading) return;
+        dashboardLoading = true;
+        try {
+            const [petsResult, logsResult] = await Promise.all([
+                supabaseClient.from('pets').select('*'),
+                supabaseClient.from('location_logs').select('*').order('date_time', { ascending: false, nullsFirst: false }).limit(500)
+            ]);
+
+            if (petsResult.error) throw new Error('pets table: ' + petsResult.error.message);
+            if (logsResult.error) throw new Error('location_logs table: ' + logsResult.error.message);
+
+            const pets = petsResult.data || [];
+            const logs = (logsResult.data || []).filter(row => getCoordinates(row));
+            logs.sort((a, b) => getTimestamp(b) - getTimestamp(a));
+
+            const petMap = new Map(pets.map(p => [String(p.id), p]));
+            const latestByPet = new Map();
+            for (const row of logs) {
+                const key = String(row.pet_id);
+                if (!latestByPet.has(key)) latestByPet.set(key, row);
+            }
+
+            const currentTime = Date.now();
+            let activeCollars = 0;
+            for (const row of latestByPet.values()) {
+                const ts = getTimestamp(row);
+                if (ts && currentTime - ts <= ONLINE_WINDOW_MS) activeCollars++;
+            }
+
+            document.getElementById('stat-pets').textContent = pets.length;
+            document.getElementById('stat-collars').textContent = activeCollars;
+            document.getElementById('locations-count').textContent = (logsResult.data || []).length;
+            document.getElementById('stat-alerts').textContent = (logsResult.data || []).filter(row => ['danger', 'warning', 'alert'].includes(String(row.safety_status || '').toLowerCase())).length;
+
+            const onlineBadge = document.getElementById('dashboard-collar-status');
+            const onlineText = onlineBadge.querySelector('span:last-child');
+            onlineText.textContent = activeCollars > 0 ? 'Online' : 'Offline';
+            onlineBadge.classList.toggle('offline', activeCollars === 0);
+
+            // Remove markers for pets with no valid location; update/create the rest.
+            for (const [key, marker] of markersByPet.entries()) {
+                if (!latestByPet.has(key) || !petMap.has(key)) {
+                    map.removeLayer(marker);
+                    markersByPet.delete(key);
+                }
+            }
+
+            for (const [key, row] of latestByPet.entries()) {
+                const coords = getCoordinates(row);
+                if (!coords) continue;
+                const pet = petMap.get(key);
+                const petName = pet?.pet_name || `Pet #${key}`;
+                const status = String(row.safety_status || 'Unknown');
+                const popup = `<b>🐾 ${escapeHtml(petName)}</b><br>Status: ${escapeHtml(status)}<br>Latitude: ${coords.lat.toFixed(6)}<br>Longitude: ${coords.lng.toFixed(6)}<br>Last seen: ${escapeHtml(getTimestamp(row) ? new Date(getTimestamp(row)).toLocaleString() : 'Timestamp missing')}`;
+                let marker = markersByPet.get(key);
+                if (!marker) {
+                    marker = L.marker([coords.lat, coords.lng]).addTo(map);
+                    marker.petId = key;
+                    markersByPet.set(key, marker);
+                } else {
+                    marker.setLatLng([coords.lat, coords.lng]);
+                }
+                marker.bindPopup(popup);
+            }
+
+            const mostRecent = logs[0] || null;
+            const recentPet = mostRecent ? petMap.get(String(mostRecent.pet_id)) : null;
+            updateStatusSummary(mostRecent, recentPet);
+
+            if (markersByPet.size && !mapHasCentered) {
+                const group = L.featureGroup(Array.from(markersByPet.values()));
+                map.fitBounds(group.getBounds().pad(0.2), { maxZoom: 16 });
+                mapHasCentered = true;
+            } else if (markersByPet.size === 1 && mostRecent) {
+                // Keep a single collar visible as it moves.
+                const point = getCoordinates(mostRecent);
+                if (point) map.panTo([point.lat, point.lng], { animate: true });
+            }
+        } catch (error) {
+            console.error('Dashboard GPS load failed:', error);
+            setGpsStatus('⚠️ Supabase read error', 'danger');
+            document.getElementById('coords-text').textContent = error.message || 'Unable to read location data.';
+        } finally {
+            dashboardLoading = false;
+        }
+    }
+
+    loadDashboard();
+    setInterval(loadDashboard, 10000); // refresh dashboard data every 10 seconds
 </script>
 
 </body>
