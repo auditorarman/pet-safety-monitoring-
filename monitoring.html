@@ -165,107 +165,163 @@
 <script>
     const user = requireLogin();
     if (user) {
-        document.getElementById('userAvatar').textContent = user.username[0].toUpperCase();
-        document.getElementById('userName').textContent = user.username;
+        document.getElementById('userAvatar').textContent = (user.username || 'A')[0].toUpperCase();
+        document.getElementById('userName').textContent = user.username || 'User';
         document.getElementById('userRole').textContent = user.role || 'User';
     }
 
-    // Map setup
     const map = L.map('map').setView([12.8797, 121.7740], 6);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
         attribution: '© OpenStreetMap contributors'
     }).addTo(map);
 
-    const markers = [];
+    const markersByPet = new Map();
+    let mapHasCentered = false;
+    let isLoading = false;
+    const ONLINE_WINDOW_MS = 60000;
+
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, char => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[char]));
+    }
+    function coordsFor(row) {
+        const lat = Number(row?.latitude), lng = Number(row?.longitude);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180 || (lat === 0 && lng === 0)) return null;
+        return { lat, lng };
+    }
+    function timestampFor(row) {
+        if (!row?.date_time) return 0;
+        let value = String(row.date_time).trim();
+        // Treat timezone-naïve Postgres timestamps as UTC, consistent with now() on Supabase.
+        if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(value)) {
+            value = value.replace(' ', 'T') + 'Z';
+        }
+        const time = new Date(value).getTime();
+        return Number.isFinite(time) ? time : 0;
+    }
+    function speciesEmoji(species) {
+        const s = String(species || '').toLowerCase();
+        if (s.includes('dog')) return '🐶';
+        if (s.includes('cat')) return '🐱';
+        if (s.includes('bird')) return '🐦';
+        return '🐾';
+    }
+    function badgeFor(loc) {
+        if (!loc) return { cls: 'badge-none', text: 'No GPS Data' };
+        const timestamp = timestampFor(loc);
+        if (!timestamp || Date.now() - timestamp > ONLINE_WINDOW_MS) return { cls: 'badge-none', text: 'Offline / Stale' };
+        const status = String(loc.safety_status || '').toLowerCase();
+        if (status === 'danger' || status === 'alert') return { cls: 'badge-danger', text: 'Danger' };
+        if (status === 'warning') return { cls: 'badge-warning', text: 'Warning' };
+        return { cls: 'badge-safe', text: 'GPS Online · Safe' };
+    }
 
     async function loadMonitoring() {
-        const { data: pets } = await supabaseClient.from('pets').select('*');
-        const { data: logs } = await supabaseClient
-            .from('location_logs')
-            .select('*')
-            .order('date_time', { ascending: false });
+        if (isLoading) return;
+        isLoading = true;
+        try {
+            const [petsResult, logsResult] = await Promise.all([
+                supabaseClient.from('pets').select('*'),
+                supabaseClient.from('location_logs').select('*').order('date_time', { ascending: false, nullsFirst: false }).limit(500)
+            ]);
+            if (petsResult.error) throw new Error('pets table: ' + petsResult.error.message);
+            if (logsResult.error) throw new Error('location_logs table: ' + logsResult.error.message);
 
-        const petMap = {};
-        (pets || []).forEach(p => petMap[p.id] = p);
+            const pets = petsResult.data || [];
+            const logs = (logsResult.data || []).filter(row => coordsFor(row));
+            logs.sort((a, b) => timestampFor(b) - timestampFor(a));
 
-        // Latest location per pet
-        const latest = {};
-        (logs || []).forEach(log => {
-            if (!latest[log.pet_id]) latest[log.pet_id] = log;
-        });
+            const latest = new Map();
+            logs.forEach(log => {
+                const key = String(log.pet_id);
+                if (!latest.has(key)) latest.set(key, log);
+            });
+            const petsById = new Map(pets.map(pet => [String(pet.id), pet]));
 
-        const petsWithLoc = Object.keys(latest).length;
+            document.getElementById('monitor-subtitle').textContent =
+                `${pets.length} pet${pets.length !== 1 ? 's' : ''} · ${latest.size} with GPS data · auto-refresh every 10 seconds`;
 
-        document.getElementById('monitor-subtitle').textContent =
-            `${(pets || []).length} pet${(pets || []).length !== 1 ? 's' : ''} • ${petsWithLoc} with location data`;
-
-        // Build markers
-        markers.forEach(m => map.removeLayer(m));
-        markers.length = 0;
-
-        let listHtml = '';
-
-        (pets || []).forEach(pet => {
-            const loc = latest[pet.id];
-            const species = (pet.species || '').toLowerCase();
-            let emoji = '🐾';
-            if (species.includes('dog')) emoji = '🐶';
-            else if (species.includes('cat')) emoji = '🐱';
-            else if (species.includes('bird')) emoji = '🐦';
-
-            let badgeClass = 'badge-none';
-            let badgeText = 'No Data';
-
-            if (loc) {
-                const status = (loc.safety_status || '').toLowerCase();
-                if (status === 'safe') { badgeClass = 'badge-safe'; badgeText = 'Safe'; }
-                else if (status === 'warning') { badgeClass = 'badge-warning'; badgeText = 'Warning'; }
-                else if (status === 'danger') { badgeClass = 'badge-danger'; badgeText = 'Danger'; }
+            for (const [key, marker] of markersByPet.entries()) {
+                if (!latest.has(key) || !petsById.has(key)) {
+                    map.removeLayer(marker);
+                    markersByPet.delete(key);
+                }
             }
 
-            listHtml += `
-                <div class="pet-item" onclick="focusPet(${pet.id})">
-                    <div class="pet-emoji">${emoji}</div>
-                    <div class="pet-info">
-                        <strong>${pet.pet_name}</strong>
-                        <span>${pet.species || '-'}</span>
-                        <span class="badge ${badgeClass}">${badgeText}</span>
-                    </div>
-                </div>`;
+            let listHtml = '';
+            pets.forEach(pet => {
+                const key = String(pet.id);
+                const loc = latest.get(key) || null;
+                const emoji = speciesEmoji(pet.species);
+                const badge = badgeFor(loc);
+                let locationHtml = '<span>No GPS location uploaded yet.</span>';
+                if (loc) {
+                    const c = coordsFor(loc);
+                    locationHtml = `<span>Lat: ${c.lat.toFixed(6)}</span><span>Lng: ${c.lng.toFixed(6)}</span><span>Updated: ${escapeHtml(timestampFor(loc) ? new Date(timestampFor(loc)).toLocaleString() : 'Timestamp missing')}</span>`;
+                }
+                listHtml += `
+                    <div class="pet-item" data-pet-id="${escapeHtml(key)}" role="button" tabindex="0">
+                        <div class="pet-emoji">${emoji}</div>
+                        <div class="pet-info">
+                            <strong>${escapeHtml(pet.pet_name || 'Unnamed pet')}</strong>
+                            <span>${escapeHtml(pet.species || '-')}</span>
+                            <span class="badge ${badge.cls}">${badge.text}</span>
+                            ${locationHtml}
+                        </div>
+                    </div>`;
 
-            // Marker
-            if (loc) {
-                const lat = parseFloat(loc.latitude);
-                const lng = parseFloat(loc.longitude);
-                const m = L.marker([lat, lng]).addTo(map)
-                    .bindPopup(`<b>${emoji} ${pet.pet_name}</b><br>
-                                Status: ${loc.safety_status}<br>
-                                Last seen: ${loc.date_time}`);
-                m.petId = pet.id;
-                markers.push(m);
+                if (loc) {
+                    const c = coordsFor(loc);
+                    const popup = `<b>${emoji} ${escapeHtml(pet.pet_name || 'Pet')}</b><br>Status: ${escapeHtml(loc.safety_status || 'Unknown')}<br>Lat: ${c.lat.toFixed(6)}<br>Lng: ${c.lng.toFixed(6)}<br>Last seen: ${escapeHtml(timestampFor(loc) ? new Date(timestampFor(loc)).toLocaleString() : 'Timestamp missing')}`;
+                    let mapMarker = markersByPet.get(key);
+                    if (!mapMarker) {
+                        mapMarker = L.marker([c.lat, c.lng]).addTo(map);
+                        mapMarker.petId = key;
+                        markersByPet.set(key, mapMarker);
+                    } else {
+                        mapMarker.setLatLng([c.lat, c.lng]);
+                    }
+                    mapMarker.bindPopup(popup);
+                }
+            });
+
+            document.getElementById('pets-list').innerHTML = listHtml || '<div class="empty"><h3>No pets registered</h3><p>Add a pet on the My Pets page.</p></div>';
+            document.querySelectorAll('.pet-item').forEach(item => {
+                const handler = () => focusPet(item.dataset.petId);
+                item.addEventListener('click', handler);
+                item.addEventListener('keydown', event => {
+                    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); handler(); }
+                });
+            });
+
+            if (markersByPet.size && !mapHasCentered) {
+                map.fitBounds(L.featureGroup(Array.from(markersByPet.values())).getBounds().pad(0.2), { maxZoom: 16 });
+                mapHasCentered = true;
+            } else if (markersByPet.size === 1) {
+                const onlyMarker = Array.from(markersByPet.values())[0];
+                map.panTo(onlyMarker.getLatLng(), { animate: true });
             }
-        });
-
-        document.getElementById('pets-list').innerHTML =
-            listHtml || '<div style="color:#94a3b8; text-align:center; padding:20px;">No pets yet</div>';
-
-        // Fit bounds
-        if (markers.length > 0) {
-            const group = L.featureGroup(markers);
-            map.fitBounds(group.getBounds().pad(0.2));
+        } catch (error) {
+            console.error('Monitoring load failed:', error);
+            document.getElementById('monitor-subtitle').textContent = 'Cannot load Supabase data: ' + error.message;
+            document.getElementById('pets-list').innerHTML = '<div style="color:#dc2626;padding:12px;">Unable to load pets or location records. Check Supabase permissions and table columns.</div>';
+        } finally {
+            isLoading = false;
         }
     }
 
     function focusPet(petId) {
-        const marker = markers.find(m => m.petId === petId);
+        const marker = markersByPet.get(String(petId));
         if (marker) {
-            map.setView(marker.getLatLng(), 15);
+            map.setView(marker.getLatLng(), 17);
             marker.openPopup();
         }
     }
 
     loadMonitoring();
+    setInterval(loadMonitoring, 10000);
 </script>
 
 </body>
